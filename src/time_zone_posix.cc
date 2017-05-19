@@ -18,10 +18,14 @@
 #include <cstring>
 #include <limits>
 #include <string>
+#include <sstream>
 
 namespace cctz {
 
 namespace {
+
+// The prefix used for the internal names of posix time zones.
+const char kPosixPrefix[] = "Posix/";
 
 const char kDigits[] = "0123456789";
 
@@ -146,6 +150,66 @@ bool ParsePosixSpec(const std::string& spec, PosixTimeZone* res) {
   p = ParseDateTime(p, &res->dst_end);
 
   return p != nullptr && *p == '\0';
+}
+
+void ToOffsetString(int offset, std::ostringstream* str) {
+  int sign = offset > 0 ? 1 : -1;
+  // normalize to positive
+  int positive_offset = sign * offset;
+  int hours = positive_offset / 3600;
+  int minutes = (positive_offset % 3600) / 60;
+  int seconds = positive_offset % 60;
+
+  if (sign < 0) {
+    *str << '-';
+  }
+  *str << hours << ':' << minutes << ':' << seconds;
+}
+
+void ToPosixTransitionString(const PosixTransition& transition, std::stringstream* str) {
+  if (transition.date.fmt == PosixTransition::J) {
+    *str << 'J' << transition.date.j.day;
+  } else if (transition.date.fmt == PosixTransition::N) {
+    *str << transition.n.day;
+  } else if (transition.date.fmt == PosixTransition::M) {
+    *str << 'M' << transition.date.m.month << '.' << transition.date.m.week << '.' << transition.date.m.weekday;
+  }
+}
+
+std::string ToPosixSpec(const PosixTimeZone& spec) {
+  std::ostringstream str;
+
+  str << '<' << spec.std_abbr << '>';
+  ToOffsetString(spec.std_offset, str);
+
+  if (spec.dst_abbr.empty()) {
+    return str.str();
+  }
+
+  str << '<' << spec.dst_abbr << '>';
+  ToOffsetString(spec.dst_offset, str);
+
+  str << ',';
+  ToPosixTransitionString(spec.dst_start);
+  str << ',';
+  ToPosixTransitionString(spec.dst_end);
+
+  return str.str();
+}
+
+std::string PosixTimeZoneToName(const PosixTimeZone& spec) {
+  return kPosixPrefix + ToPosixSpec(spec);
+}
+
+bool PosixTimeZoneFromName(const std::string& name, PosixTimeZone* spec) {
+  const std::size_t prefix_len = sizeof(kPosixPrefix) - 1;
+  const char* const ep = kPosixPrefix + prefix_len;
+  if (name.size() < prefix_len)
+    return false;
+  if (!std::equal(kFixedOffsetPrefix, ep, name.begin()))
+    return false;
+  const char* np = name.data() + prefix_len;
+  return ParsePosixSpec(name.substr(prefix_len), spec);
 }
 
 }  // namespace cctz

@@ -54,6 +54,12 @@ time_zone fixed_time_zone(const sys_seconds& offset) {
   return tz;
 }
 
+time_zone posix_time_zone(const PosixTimeZone& spec) {
+  time_zone tz;
+  load_time_zone(PosixTimeZoneToName(spec), &tz);
+  return tz;
+}
+
 time_zone local_time_zone() {
   const char* zone = ":localtime";
 

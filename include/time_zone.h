@@ -163,6 +163,52 @@ class time_zone {
   const Impl* impl_ = nullptr;
 };
 
+// The date/time of the transition. The date is specified as either:
+// (J) the Nth day of the year (1 <= N <= 365), excluding leap days, or
+// (N) the Nth day of the year (0 <= N <= 365), including leap days, or
+// (M) the Nth weekday of a month (e.g., the 2nd Sunday in March).
+// The time, specified as a day offset, identifies the particular moment
+// of the transition, and may be negative or >= 24h, and in which case
+// it would take us to another day, and perhaps week, or even month.
+struct PosixTransition {
+  enum DateFormat { J, N, M };
+  struct {
+    DateFormat fmt;
+    union {
+      struct {
+        std::int_fast16_t day;  // day of non-leap year [1:365]
+      } j;
+      struct {
+        std::int_fast16_t day;  // day of year [0:365]
+      } n;
+      struct {
+        std::int_fast8_t month;    // month of year [1:12]
+        std::int_fast8_t week;     // week of month [1:5] (5==last)
+        std::int_fast8_t weekday;  // 0==Sun, ..., 6=Sat
+      } m;
+    };
+  } date;
+  struct {
+    std::int_fast32_t offset;  // seconds before/after 00:00:00
+  } time;
+};
+
+// The entirety of a POSIX-string specified time-zone rule. The standard
+// abbreviation and offset are always given. If the time zone includes
+// daylight saving, then the daylight abbrevation is non-empty and the
+// remaining fields are also valid. Note that the start/end transitions
+// are not ordered---in the southern hemisphere the transition to end
+// daylight time occurs first in any particular year.
+struct PosixTimeZone {
+  std::string std_abbr;
+  std::int_fast32_t std_offset;
+
+  std::string dst_abbr;
+  std::int_fast32_t dst_offset;
+  PosixTransition dst_start;
+  PosixTransition dst_end;
+};
+
 // Relational operators.
 bool operator==(time_zone lhs, time_zone rhs);
 inline bool operator!=(time_zone lhs, time_zone rhs) { return !(lhs == rhs); }
@@ -179,6 +225,11 @@ time_zone utc_time_zone();
 // Note: If the absolute value of the offset is greater than 24 hours
 // you'll get UTC (i.e., zero offset) instead.
 time_zone fixed_time_zone(const sys_seconds& offset);
+
+// Returns a time zone that is specified by Posix time-zone specification..
+// Note: If the absolute value of the offset is greater than 24 hours
+// you'll get UTC (i.e., zero offset) instead.
+time_zone posix_time_zone(const PosixTimeZone& spec);
 
 // Returns a time zone representing the local time zone. Falls back to UTC.
 time_zone local_time_zone();
