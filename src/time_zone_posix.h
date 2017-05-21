@@ -65,6 +65,9 @@ namespace cctz {
 // could not be parsed (although some fields of *res may have been altered).
 bool ParsePosixSpec(const std::string& spec, PosixTimeZone* res);
 
+std::string PosixTimeZoneToName(const PosixTimeZone& spec);
+bool PosixTimeZoneFromName(const std::string& name, PosixTimeZone* spec);
+
 }  // namespace cctz
 
 #endif  // CCTZ_TIME_ZONE_POSIX_H_

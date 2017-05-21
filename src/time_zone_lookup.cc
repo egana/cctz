@@ -19,6 +19,7 @@
 #include <string>
 
 #include "time_zone_fixed.h"
+#include "time_zone_posix.h"
 #include "time_zone_impl.h"
 
 namespace cctz {

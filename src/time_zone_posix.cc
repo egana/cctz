@@ -166,11 +166,11 @@ void ToOffsetString(int offset, std::ostringstream* str) {
   *str << hours << ':' << minutes << ':' << seconds;
 }
 
-void ToPosixTransitionString(const PosixTransition& transition, std::stringstream* str) {
+void ToPosixTransitionString(const PosixTransition& transition, std::ostringstream* str) {
   if (transition.date.fmt == PosixTransition::J) {
     *str << 'J' << transition.date.j.day;
   } else if (transition.date.fmt == PosixTransition::N) {
-    *str << transition.n.day;
+    *str << transition.date.n.day;
   } else if (transition.date.fmt == PosixTransition::M) {
     *str << 'M' << transition.date.m.month << '.' << transition.date.m.week << '.' << transition.date.m.weekday;
   }
@@ -180,19 +180,19 @@ std::string ToPosixSpec(const PosixTimeZone& spec) {
   std::ostringstream str;
 
   str << '<' << spec.std_abbr << '>';
-  ToOffsetString(spec.std_offset, str);
+  ToOffsetString(spec.std_offset, &str);
 
   if (spec.dst_abbr.empty()) {
     return str.str();
   }
 
   str << '<' << spec.dst_abbr << '>';
-  ToOffsetString(spec.dst_offset, str);
+  ToOffsetString(spec.dst_offset, &str);
 
   str << ',';
-  ToPosixTransitionString(spec.dst_start);
+  ToPosixTransitionString(spec.dst_start, &str);
   str << ',';
-  ToPosixTransitionString(spec.dst_end);
+  ToPosixTransitionString(spec.dst_end, &str);
 
   return str.str();
 }
@@ -206,9 +206,8 @@ bool PosixTimeZoneFromName(const std::string& name, PosixTimeZone* spec) {
   const char* const ep = kPosixPrefix + prefix_len;
   if (name.size() < prefix_len)
     return false;
-  if (!std::equal(kFixedOffsetPrefix, ep, name.begin()))
+  if (!std::equal(kPosixPrefix, ep, name.begin()))
     return false;
-  const char* np = name.data() + prefix_len;
   return ParsePosixSpec(name.substr(prefix_len), spec);
 }
 

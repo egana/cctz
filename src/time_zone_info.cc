@@ -249,7 +249,8 @@ bool TimeZoneInfo::ResetToBuiltinUTC(const sys_seconds& offset) {
 // Reset by posix time zone specification
 bool TimeZoneInfo::ResetToPosixTimeZone(const PosixTimeZone& spec) {
   if (spec.dst_abbr.empty()) {  // std only
-    return ResetToBuiltinUTC(spec.std_offset);
+    return ResetToBuiltinUTC(sys_seconds(spec.std_offset));
+    //todo: set abbreviation
   }
 
   // Construct the transitions for an additional 400 years using the
@@ -265,66 +266,94 @@ bool TimeZoneInfo::ResetToPosixTimeZone(const PosixTimeZone& spec) {
   abbreviations_.append(1, '\0');  // add NUL
 
   transition_types_.resize(2);
-  auto* std_transition_type = transition_types_[0];
-  std_transition_type->utc_offset = spec.std_offset;
-  std_transition_type->civil_max = ??;
-  std_transition_type->civil_min = ??;
-  std_transition_type->is_dst = false;
-  std_transition_type->abbr_index = 0;
+  default_transition_type_ = 0;
 
-  auto* dst_transition_type = transition_types_[1];
-  dst_transition_type->utc_offset = spec.dst_offset;
-  dst_transition_type->civil_max = ??;
-  dst_transition_type->civil_min = ??;
-  dst_transition_type->is_dst = true;
-  dst_transition_type->abbr_index = spec.std_abbr.size() + 1;
+  auto* std_tt = &transition_types_[0];
+  std_tt->utc_offset = spec.std_offset;
+  std_tt->is_dst = false;
+  std_tt->abbr_index = 0;
+  std_tt->civil_max = LocalTime(sys_seconds::max().count(), *std_tt).cs;
+  std_tt->civil_min = LocalTime(sys_seconds::min().count(), *std_tt).cs;
 
-  // The future specification should match the last two transitions,
-  // and those transitions should have different is_dst flags.
-//  const Transition* tr0 = &transitions_[hdr.timecnt - 1];
-//  const Transition* tr1 = &transitions_[hdr.timecnt - 2];
-//  const TransitionType* tt0 = &transition_types_[tr0->type_index];
-//  const TransitionType* tt1 = &transition_types_[tr1->type_index];
-//  const TransitionType& spring(tt0->is_dst ? *tt0 : *tt1);
-//  const TransitionType& autumn(tt0->is_dst ? *tt1 : *tt0);
-//  CheckTransition(name, spring, posix.dst_offset, true, posix.dst_abbr);
-//  CheckTransition(name, autumn, posix.std_offset, false, posix.std_abbr);
+  auto* dst_tt = &transition_types_[1];
+  dst_tt->utc_offset = spec.dst_offset;
+  dst_tt->is_dst = true;
+  dst_tt->abbr_index = spec.std_abbr.size() + 1;
+  dst_tt->civil_max = LocalTime(sys_seconds::max().count(), *dst_tt).cs;
+  dst_tt->civil_min = LocalTime(sys_seconds::min().count(), *dst_tt).cs;
 
-  // Add the transitions to tr1 and back to tr0 for each extra year.
-  last_year_ = LocalTime(tr0->unix_time, *tt0).cs.year();
-  bool leap_year = IsLeap(last_year_);
-  const civil_day jan1(last_year_, 1, 1);
+  constexpr auto min_unix_time = -(1LL << 59);
+
+  auto first_year = LocalTime(min_unix_time, *std_tt).cs.year();
+  const civil_day jan1(first_year, 1, 1);
   std::int_fast64_t jan1_time = civil_second(jan1) - civil_second();
+  bool leap_year = IsLeap(first_year);
   int jan1_weekday = (static_cast<int>(get_weekday(jan1)) + 1) % 7;
-  Transition* tr = &transitions_[hdr.timecnt];  // next trans to fill
-  if (LocalTime(tr1->unix_time, *tt1).cs.year() != last_year_) {
-    // Add a single extra transition to align to a calendar year.
-    transitions_.resize(transitions_.size() + 1);
-    assert(tr == &transitions_[hdr.timecnt]);  // no reallocation
-    const PosixTransition& pt1(tt0->is_dst ? posix.dst_end : posix.dst_start);
-    std::int_fast64_t tr1_offset = TransOffset(leap_year, jan1_weekday, pt1);
-    tr->unix_time = jan1_time + tr1_offset - tt0->utc_offset;
-    tr++->type_index = tr1->type_index;
-    tr0 = &transitions_[hdr.timecnt];
-    tr1 = &transitions_[hdr.timecnt - 1];
-    tt0 = &transition_types_[tr0->type_index];
-    tt1 = &transition_types_[tr1->type_index];
+
+  auto start_offset = TransOffset(leap_year, jan1_weekday, spec.dst_start);
+  auto end_offset = TransOffset(leap_year, jan1_weekday, spec.dst_end);
+
+  if (start_offset == end_offset) {
+    return false;
   }
-  const PosixTransition& pt1(tt0->is_dst ? posix.dst_end : posix.dst_start);
-  const PosixTransition& pt0(tt0->is_dst ? posix.dst_start : posix.dst_end);
+
+  transition_types_.resize(2);
+
+  size_t ti0 = start_offset < end_offset ? 0 : 1;
+  size_t ti1 = start_offset < end_offset ? 1 : 0;
+  TransitionType* tt0 = &transition_types_[ti0];
+  TransitionType* tt1 = &transition_types_[ti1];
+  // transition to tt0
+  const PosixTransition* pt0 = start_offset < end_offset ? &spec.dst_end : &spec.dst_start;
+  // transition to tt1
+  const PosixTransition* pt1 = start_offset < end_offset ? &spec.dst_start : &spec.dst_end;
+
+  // Add first transition at jan1 in the first year
+  Transition* tr = &transitions_[0];
+  if (start_offset > 0 && end_offset > 0) {
+    transitions_.resize(transitions_.size() + 1);
+    assert(tr == &transitions_[0]);  // no reallocation
+    tr->unix_time = jan1_time - tt0->utc_offset;
+    tr++->type_index = ti0;
+  }
+
+  last_year_ = first_year - 1;
   for (const cctz::year_t limit = last_year_ + 400; last_year_ < limit;) {
     last_year_ += 1;  // an additional year of generated transitions
+    std::int_fast64_t tr1_offset = TransOffset(leap_year, jan1_weekday, *pt1);
+    tr->unix_time = jan1_time + tr1_offset - tt0->utc_offset;
+    tr++->type_index = ti1;
+    std::int_fast64_t tr0_offset = TransOffset(leap_year, jan1_weekday, *pt0);
+    tr->unix_time = jan1_time + tr0_offset - tt1->utc_offset;
+    tr++->type_index = ti0;
     jan1_time += kSecsPerYear[leap_year];
     jan1_weekday = (jan1_weekday + kDaysPerYear[leap_year]) % 7;
-    leap_year = !leap_year && IsLeap(last_year_);
-    std::int_fast64_t tr1_offset = TransOffset(leap_year, jan1_weekday, pt1);
-    tr->unix_time = jan1_time + tr1_offset - tt0->utc_offset;
-    tr++->type_index = tr1->type_index;
-    std::int_fast64_t tr0_offset = TransOffset(leap_year, jan1_weekday, pt0);
-    tr->unix_time = jan1_time + tr0_offset - tt1->utc_offset;
-    tr++->type_index = tr0->type_index;
+    leap_year = !leap_year && IsLeap(last_year_ + 1);
   }
-  assert(tr == &transitions_[0] + transitions_.size());
+
+  // todo: check
+  default_transition_type_ = ti0;
+
+  // Compute the local civil time for each transition and the preceeding
+  // second. These will be used for reverse conversions in MakeTime().
+  const TransitionType* ttp = &transition_types_[default_transition_type_];
+  for (std::size_t i = 0; i != transitions_.size(); ++i) {
+    Transition& tr(transitions_[i]);
+    tr.prev_civil_sec = LocalTime(tr.unix_time, *ttp).cs - 1;
+    ttp = &transition_types_[tr.type_index];
+    tr.civil_sec = LocalTime(tr.unix_time, *ttp).cs;
+    if (i != 0) {
+      // Check that the transitions are ordered by civil time. Essentially
+      // this means that an offset change cannot cross another such change.
+      // No one does this in practice, and we depend on it in MakeTime().
+      if (!Transition::ByCivilTime()(transitions_[i - 1], tr))
+        return false;  // out of order
+    }
+  }
+
+  transitions_.shrink_to_fit();
+
+  return true;
 }
 
 // Builds the in-memory header using the raw bytes from the file.

@@ -89,12 +89,6 @@ class TimeZoneInfo : public TimeZoneIf {
     std::size_t DataLength(std::size_t time_len) const;
   };
 
-  struct NthDayOfTheWeekInMonth {
-      detail::weekday weekday;
-      std::int
-
-  };
-
   void CheckTransition(const std::string& name, const TransitionType& tt,
                        std::int_fast32_t offset, bool is_dst,
                        const std::string& abbr) const;
